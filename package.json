@@ -1,0 +1,13 @@
+{
+  "name": "geo-playground",
+  "private": true,
+  "workspaces": [
+    "services/telemetry-gateway"
+  ],
+  "scripts": {
+    "test": "npm run test -w telemetry-gateway",
+    "smoke": "bash scripts/smoke_e2e.sh",
+    "smoke:openclaw": "bash scripts/smoke_openclaw.sh",
+    "test:isolation": "bash scripts/test_openclaw_isolation.sh"
+  }
+}

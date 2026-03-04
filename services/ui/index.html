@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Geo Playground - Analyst Console</title>
+  <link href="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.js"></script>
+  <style>
+    :root {
+      --bg: #09121f;
+      --panel: rgba(18, 26, 43, 0.92);
+      --panel-2: rgba(11, 18, 32, 0.9);
+      --air: #2ec4b6;
+      --sea: #ff9f1c;
+      --text: #e8edf6;
+      --muted: #9faecc;
+      --line: rgba(255, 255, 255, 0.12);
+    }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: "IBM Plex Sans", "Segoe UI", sans-serif; }
+    #map { position: absolute; inset: 0; }
+    .top-left {
+      position: absolute; top: 12px; left: 12px; z-index: 3; width: 330px;
+      background: var(--panel); border: 1px solid rgba(46, 196, 182, 0.35);
+      border-radius: 12px; padding: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      backdrop-filter: blur(8px);
+    }
+    .title { margin: 0 0 6px; font-size: 18px; letter-spacing: 0.2px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .stats { margin-top: 8px; font-size: 13px; line-height: 1.6; }
+    .air { color: var(--air); }
+    .sea { color: var(--sea); }
+
+    .entity-card {
+      position: absolute; left: 12px; bottom: 12px; z-index: 3; width: 360px;
+      background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+      padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); backdrop-filter: blur(8px);
+    }
+    .entity-card h2 { margin: 0 0 8px; font-size: 16px; }
+    .entity-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 12px; }
+    .entity-label { color: var(--muted); }
+
+    .copilot {
+      position: absolute; right: 12px; top: 12px; bottom: 12px; width: 360px; z-index: 3;
+      display: flex; flex-direction: column;
+      background: var(--panel); border: 1px solid rgba(255, 159, 28, 0.35);
+      border-radius: 12px; overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25); backdrop-filter: blur(8px);
+    }
+    .copilot-head { padding: 12px; border-bottom: 1px solid var(--line); }
+    .copilot-title { margin: 0; font-size: 16px; }
+    .copilot-log { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .msg { padding: 8px 10px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; line-height: 1.35; }
+    .msg-user { align-self: flex-end; background: rgba(46, 196, 182, 0.18); border: 1px solid rgba(46, 196, 182, 0.35); }
+    .msg-bot { align-self: stretch; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); }
+    .copilot-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
+    .copilot-input { flex: 1; background: rgba(0,0,0,0.24); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 10px; }
+    .copilot-btn { border: 0; border-radius: 8px; padding: 10px 12px; background: #ff9f1c; color: #111; font-weight: 700; cursor: pointer; }
+
+    @media (max-width: 980px) {
+      .copilot { width: 46vw; }
+      .entity-card { width: 42vw; }
+      .top-left { width: 42vw; }
+    }
+    @media (max-width: 760px) {
+      .copilot { position: absolute; left: 8px; right: 8px; width: auto; top: auto; bottom: 8px; height: 36vh; }
+      .entity-card { left: 8px; right: 8px; width: auto; bottom: calc(36vh + 16px); }
+      .top-left { left: 8px; right: 8px; width: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <section class="top-left">
+    <h1 class="title">Analyst Console</h1>
+    <div class="muted">Tracks + entity card + copilot are now live.</div>
+    <div class="stats">
+      <div>Total: <span id="countAll" class="air">0</span></div>
+      <div>Air: <span id="countAir" class="air">0</span></div>
+      <div>Maritime: <span id="countSea" class="sea">0</span></div>
+      <div>Updated: <span id="updated" class="muted">never</span></div>
+    </div>
+  </section>
+
+  <section class="entity-card" id="entityCard">
+    <h2>Selected Entity</h2>
+    <div id="entityEmpty" class="muted">Click any track to inspect details.</div>
+    <div id="entityBody" style="display:none">
+      <div class="entity-grid" id="entityGrid"></div>
+    </div>
+  </section>
+
+  <section class="copilot">
+    <div class="copilot-head">
+      <h2 class="copilot-title">GEOINT Copilot</h2>
+      <div class="muted">Ask about fast movers, counts, or current air/maritime picture.</div>
+    </div>
+    <div class="copilot-log" id="copilotLog">
+      <div class="msg msg-bot">Copilot online. Try: "Summarize the current picture" or "Fastest entities right now".</div>
+    </div>
+    <form class="copilot-form" id="copilotForm">
+      <input class="copilot-input" id="copilotInput" type="text" placeholder="Ask the copilot..." />
+      <button class="copilot-btn" type="submit">Send</button>
+    </form>
+  </section>
+
+  <script>
+    const apiBase = "/api";
+
+    const map = new maplibregl.Map({
+      container: "map",
+      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+      center: [-122.4194, 37.7749],
+      zoom: 6
+    });
+
+    let selectedEntityId = null;
+
+    function ensureSourcesAndLayers() {
+      if (!map.getSource("tracks")) {
+        map.addSource("tracks", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      }
+      if (!map.getSource("trails")) {
+        map.addSource("trails", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      }
+
+      if (!map.getLayer("air-trails")) {
+        map.addLayer({
+          id: "air-trails",
+          type: "line",
+          source: "trails",
+          filter: ["==", ["get", "domain"], "air"],
+          paint: { "line-color": "#2ec4b6", "line-opacity": 0.4, "line-width": 1.5 }
+        });
+      }
+
+      if (!map.getLayer("sea-trails")) {
+        map.addLayer({
+          id: "sea-trails",
+          type: "line",
+          source: "trails",
+          filter: ["==", ["get", "domain"], "maritime"],
+          paint: { "line-color": "#ff9f1c", "line-opacity": 0.45, "line-width": 1.5 }
+        });
+      }
+
+      if (!map.getLayer("air-tracks")) {
+        map.addLayer({
+          id: "air-tracks",
+          type: "circle",
+          source: "tracks",
+          filter: ["==", ["get", "domain"], "air"],
+          paint: {
+            "circle-radius": 4,
+            "circle-color": "#2ec4b6",
+            "circle-opacity": 0.95,
+            "circle-stroke-color": "#06101d",
+            "circle-stroke-width": 1
+          }
+        });
+      }
+
+      if (!map.getLayer("sea-tracks")) {
+        map.addLayer({
+          id: "sea-tracks",
+          type: "circle",
+          source: "tracks",
+          filter: ["==", ["get", "domain"], "maritime"],
+          paint: {
+            "circle-radius": 4,
+            "circle-color": "#ff9f1c",
+            "circle-opacity": 0.95,
+            "circle-stroke-color": "#06101d",
+            "circle-stroke-width": 1
+          }
+        });
+      }
+    }
+
+    async function refreshLive() {
+      try {
+        const response = await fetch(`${apiBase}/tracks/live`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        const features = payload.features || [];
+        const air = features.filter((f) => f.properties.domain === "air");
+        const sea = features.filter((f) => f.properties.domain === "maritime");
+
+        map.getSource("tracks")?.setData(payload);
+        document.querySelector("#countAll").textContent = String(features.length);
+        document.querySelector("#countAir").textContent = String(air.length);
+        document.querySelector("#countSea").textContent = String(sea.length);
+        document.querySelector("#updated").textContent = new Date().toISOString();
+
+        if (selectedEntityId) {
+          const selected = features.find((f) => f.properties.entity_id === selectedEntityId);
+          if (selected) {
+            renderEntityCard(selected.properties);
+          }
+        }
+      } catch (error) {
+        document.querySelector("#updated").textContent = `error: ${error.message}`;
+      }
+    }
+
+    async function refreshTrails() {
+      try {
+        const response = await fetch(`${apiBase}/tracks/trails?minutes=45&max_entities=350`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        map.getSource("trails")?.setData(payload);
+      } catch {
+        // Keep previous trails on transient failures.
+      }
+    }
+
+    function renderEntityCard(entity) {
+      const empty = document.getElementById("entityEmpty");
+      const body = document.getElementById("entityBody");
+      const grid = document.getElementById("entityGrid");
+
+      empty.style.display = "none";
+      body.style.display = "block";
+
+      const rows = [
+        ["Entity", entity.identity?.callsign || entity.identity?.icao || entity.identity?.mmsi || entity.entity_id],
+        ["Domain", entity.domain],
+        ["Source", entity.source],
+        ["Lat/Lon", `${entity.lat.toFixed(4)}, ${entity.lon.toFixed(4)}`],
+        ["Speed", entity.speed == null ? "n/a" : `${Math.round(entity.speed)} kts`],
+        ["Course", entity.course == null ? "n/a" : `${Math.round(entity.course)}°`],
+        ["Altitude", entity.altitude == null ? "n/a" : `${Math.round(entity.altitude)} ft`],
+        ["Updated", entity.timestamp]
+      ];
+
+      grid.innerHTML = rows.map(([k, v]) => (
+        `<div class="entity-label">${k}</div><div>${v}</div>`
+      )).join("");
+    }
+
+    async function onTrackClick(evt) {
+      const features = map.queryRenderedFeatures(evt.point, { layers: ["air-tracks", "sea-tracks"] });
+      if (!features.length) return;
+      const entity = features[0].properties;
+      selectedEntityId = entity.entity_id;
+      renderEntityCard(entity);
+    }
+
+    function attachMapInteractions() {
+      map.on("click", onTrackClick);
+      for (const layerId of ["air-tracks", "sea-tracks"]) {
+        map.on("mouseenter", layerId, () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseleave", layerId, () => { map.getCanvas().style.cursor = "grab"; });
+      }
+    }
+
+    function addMessage(kind, text) {
+      const log = document.getElementById("copilotLog");
+      const node = document.createElement("div");
+      node.className = `msg ${kind === "user" ? "msg-user" : "msg-bot"}`;
+      node.textContent = text;
+      log.appendChild(node);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function handleCopilotSubmit(event) {
+      event.preventDefault();
+      const input = document.getElementById("copilotInput");
+      const query = input.value.trim();
+      if (!query) return;
+
+      addMessage("user", query);
+      input.value = "";
+
+      try {
+        const response = await fetch(`${apiBase}/copilot/query`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const payload = await response.json();
+        addMessage("bot", payload.answer || "No answer returned.");
+      } catch (error) {
+        addMessage("bot", `Copilot error: ${error.message}`);
+      }
+    }
+
+    map.on("load", () => {
+      ensureSourcesAndLayers();
+      attachMapInteractions();
+
+      refreshLive();
+      refreshTrails();
+
+      setInterval(refreshLive, 5000);
+      setInterval(refreshTrails, 15000);
+    });
+
+    document.getElementById("copilotForm").addEventListener("submit", handleCopilotSubmit);
+  </script>
+</body>
+</html>
