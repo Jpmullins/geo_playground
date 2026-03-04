@@ -7,9 +7,9 @@ import { createDb } from "./db.mjs";
 import { createCache } from "./cache.mjs";
 
 const port = Number(process.env.PORT || 8080);
-const centerLat = Number(process.env.CENTER_LAT || 37.7749);
-const centerLon = Number(process.env.CENTER_LON || -122.4194);
-const radiusKm = Number(process.env.RADIUS_KM || 80);
+const initialCenterLat = Number(process.env.CENTER_LAT || 37.7749);
+const initialCenterLon = Number(process.env.CENTER_LON || -122.4194);
+const initialRadiusKm = Number(process.env.RADIUS_KM || 80);
 const pollIntervalMs = Number(process.env.POLL_INTERVAL_MS || 5000);
 const provider = process.env.ADSB_PROVIDER || "adsbfi";
 const databaseUrl = process.env.DATABASE_URL || "postgres://geouser:geopass@localhost:5432/geodb";
@@ -24,6 +24,12 @@ const cache = createCache(redisUrl);
 
 let adsbPollStatus = { ok: true, message: "init", at: new Date().toISOString() };
 let aisStatus = { ok: false, message: "not started", at: new Date().toISOString() };
+let aoi = {
+  centerLat: initialCenterLat,
+  centerLon: initialCenterLon,
+  radiusKm: initialRadiusKm,
+  updatedAt: new Date().toISOString()
+};
 
 await db.init();
 await cache.init();
@@ -39,8 +45,8 @@ async function persistEvent(event) {
 async function pollAdsb() {
   try {
     const records = provider === "airplaneslive"
-      ? await fetchAirplanesLive(centerLat, centerLon, radiusKm)
-      : await fetchAdsbFi(centerLat, centerLon, radiusKm);
+      ? await fetchAirplanesLive(aoi.centerLat, aoi.centerLon, aoi.radiusKm)
+      : await fetchAdsbFi(aoi.centerLat, aoi.centerLon, aoi.radiusKm);
 
     let ingested = 0;
     for (const record of records) {
@@ -66,24 +72,8 @@ async function pollAdsb() {
   }
 }
 
-const aisBounds = [centerLon - 2.0, centerLat - 2.0, centerLon + 2.0, centerLat + 2.0];
-const aisController = startAisStream({
-  apiKey: aisApiKey,
-  bbox: aisBounds,
-  onStatus: (status) => { aisStatus = status; },
-  onMessage: async (message) => {
-    const normalized = normalizeAisMessage(message, "aisstream");
-    if (!normalized || !validateTrackEvent(normalized)) {
-      return;
-    }
-
-    try {
-      await persistEvent(normalized);
-    } catch (error) {
-      aisStatus = { ok: false, message: `AIS persist error: ${error.message}`, at: new Date().toISOString() };
-    }
-  }
-});
+let aisController = { stop: () => {} };
+startOrRestartAisStream();
 
 setInterval(() => {
   pollAdsb();
@@ -100,6 +90,59 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+
+  if (req.method === "GET" && url.pathname === "/config/aoi") {
+    json(res, 200, {
+      center_lat: aoi.centerLat,
+      center_lon: aoi.centerLon,
+      radius_km: aoi.radiusKm,
+      updated_at: aoi.updatedAt
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/config/aoi") {
+    const body = await readJson(req);
+    const centerLat = Number(body?.center_lat);
+    const centerLon = Number(body?.center_lon);
+    const radiusKm = Number(body?.radius_km);
+    const validation = validateAoi(centerLat, centerLon, radiusKm);
+    if (!validation.ok) {
+      json(res, 400, { error: "invalid_aoi", detail: validation.error });
+      return;
+    }
+
+    aoi = {
+      centerLat,
+      centerLon,
+      radiusKm,
+      updatedAt: new Date().toISOString()
+    };
+
+    startOrRestartAisStream();
+    await pollAdsb();
+
+    json(res, 200, {
+      ok: true,
+      center_lat: aoi.centerLat,
+      center_lon: aoi.centerLon,
+      radius_km: aoi.radiusKm,
+      updated_at: aoi.updatedAt
+    });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/geocode/search") {
+    const query = String(url.searchParams.get("q") || "").trim();
+    if (!query) {
+      json(res, 400, { error: "query_required" });
+      return;
+    }
+
+    const places = await geocodeCity(query);
+    json(res, 200, { query, places });
+    return;
+  }
 
   if (req.method === "GET" && url.pathname === "/health") {
     json(res, 200, {
@@ -184,8 +227,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const live = await cache.listLive(null);
-    const fallback = live.length === 0 ? await db.listLive(null) : live;
+    const bbox = computeAisBbox(aoi.centerLat, aoi.centerLon, aoi.radiusKm);
+    const live = await cache.listLive(bbox);
+    const fallback = live.length === 0 ? await db.listLive(bbox) : live;
     const openclawAnswer = await tryOpenclawCopilot(query, fallback);
     const answer = openclawAnswer || buildCopilotReply(query, fallback);
     json(res, 200, {
@@ -210,6 +254,81 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
     await Promise.all([db.close(), cache.close()]);
     process.exit(0);
   });
+}
+
+function startOrRestartAisStream() {
+  try {
+    aisController.stop();
+  } catch {
+    // no-op
+  }
+
+  const aisBounds = computeAisBbox(aoi.centerLat, aoi.centerLon, aoi.radiusKm);
+  aisController = startAisStream({
+    apiKey: aisApiKey,
+    bbox: aisBounds,
+    onStatus: (status) => { aisStatus = status; },
+    onMessage: async (message) => {
+      const normalized = normalizeAisMessage(message, "aisstream");
+      if (!normalized || !validateTrackEvent(normalized)) {
+        return;
+      }
+
+      try {
+        await persistEvent(normalized);
+      } catch (error) {
+        aisStatus = { ok: false, message: `AIS persist error: ${error.message}`, at: new Date().toISOString() };
+      }
+    }
+  });
+}
+
+function computeAisBbox(centerLat, centerLon, radiusKm) {
+  const latDelta = radiusKm / 111.32;
+  const lonDelta = radiusKm / Math.max(111.32 * Math.cos((centerLat * Math.PI) / 180), 0.2);
+  return [centerLon - lonDelta, centerLat - latDelta, centerLon + lonDelta, centerLat + latDelta];
+}
+
+function validateAoi(centerLat, centerLon, radiusKm) {
+  if (!Number.isFinite(centerLat) || centerLat < -90 || centerLat > 90) {
+    return { ok: false, error: "center_lat must be in [-90, 90]" };
+  }
+  if (!Number.isFinite(centerLon) || centerLon < -180 || centerLon > 180) {
+    return { ok: false, error: "center_lon must be in [-180, 180]" };
+  }
+  if (!Number.isFinite(radiusKm) || radiusKm < 5 || radiusKm > 1500) {
+    return { ok: false, error: "radius_km must be in [5, 1500]" };
+  }
+  return { ok: true };
+}
+
+async function geocodeCity(query) {
+  const url = new URL("https://nominatim.openstreetmap.org/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("limit", "5");
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "user-agent": "geo-playground/0.2 (geoint-assistant)"
+      }
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
+      return [];
+    }
+    return payload.map((item) => ({
+      name: item.display_name,
+      lat: Number(item.lat),
+      lon: Number(item.lon)
+    })).filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
+  } catch {
+    return [];
+  }
 }
 
 function withCors(res) {

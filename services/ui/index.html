@@ -31,6 +31,41 @@
     .stats { margin-top: 8px; font-size: 13px; line-height: 1.6; }
     .air { color: var(--air); }
     .sea { color: var(--sea); }
+    .aoi-panel { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+    .aoi-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+    .aoi-input {
+      background: rgba(0, 0, 0, 0.24);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 7px 8px;
+      font-size: 12px;
+    }
+    .aoi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .aoi-btn {
+      border: 0;
+      border-radius: 8px;
+      padding: 7px 10px;
+      background: #2ec4b6;
+      color: #041019;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .aoi-btn-alt { background: #f2c14e; color: #1a1406; }
+    .aoi-btn-neutral { background: rgba(255, 255, 255, 0.16); color: var(--text); border: 1px solid var(--line); }
+    .aoi-status { font-size: 12px; color: var(--muted); min-height: 16px; }
+    .city-results { display: grid; gap: 4px; max-height: 110px; overflow: auto; }
+    .city-option {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--text);
+      text-align: left;
+      padding: 6px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
 
     .entity-card {
       position: absolute; left: 12px; bottom: 12px; z-index: 3; width: 360px;
@@ -82,6 +117,27 @@
       <div>Maritime: <span id="countSea" class="sea">0</span></div>
       <div>Updated: <span id="updated" class="muted">never</span></div>
     </div>
+    <div class="aoi-panel">
+      <div class="muted">Area of interest (AOI)</div>
+      <div class="aoi-row">
+        <input id="cityInput" class="aoi-input" type="text" placeholder="City or place name" />
+        <button id="citySearchBtn" class="aoi-btn aoi-btn-alt" type="button">Find</button>
+      </div>
+      <div id="cityResults" class="city-results"></div>
+      <div class="aoi-grid">
+        <input id="aoiLat" class="aoi-input" type="number" step="0.0001" placeholder="Lat" />
+        <input id="aoiLon" class="aoi-input" type="number" step="0.0001" placeholder="Lon" />
+      </div>
+      <div class="aoi-grid">
+        <input id="aoiRadius" class="aoi-input" type="number" min="5" max="1500" step="1" placeholder="Radius km" />
+        <input id="aoiRadiusRange" class="aoi-input" type="range" min="5" max="1000" step="1" />
+      </div>
+      <div class="aoi-grid">
+        <button id="aoiApplyBtn" class="aoi-btn" type="button">Apply AOI</button>
+        <button id="aoiPinBtn" class="aoi-btn aoi-btn-neutral" type="button">Drop Pin</button>
+      </div>
+      <div id="aoiStatus" class="aoi-status"></div>
+    </div>
   </section>
 
   <section class="entity-card" id="entityCard">
@@ -109,10 +165,14 @@
   <script>
     const apiBase = "/api";
 
+    const defaultAoi = { centerLat: 37.7749, centerLon: -122.4194, radiusKm: 80 };
+    let currentAoi = { ...defaultAoi };
+    let pinPickMode = false;
+
     const map = new maplibregl.Map({
       container: "map",
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-      center: [-122.4194, 37.7749],
+      center: [currentAoi.centerLon, currentAoi.centerLat],
       zoom: 6
     });
 
@@ -124,6 +184,12 @@
       }
       if (!map.getSource("trails")) {
         map.addSource("trails", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      }
+      if (!map.getSource("aoi-radius")) {
+        map.addSource("aoi-radius", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      }
+      if (!map.getSource("aoi-center")) {
+        map.addSource("aoi-center", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       }
 
       if (!map.getLayer("air-trails")) {
@@ -177,11 +243,50 @@
           }
         });
       }
+
+      if (!map.getLayer("aoi-radius-fill")) {
+        map.addLayer({
+          id: "aoi-radius-fill",
+          type: "fill",
+          source: "aoi-radius",
+          paint: {
+            "fill-color": "#2ec4b6",
+            "fill-opacity": 0.08
+          }
+        });
+      }
+
+      if (!map.getLayer("aoi-radius-line")) {
+        map.addLayer({
+          id: "aoi-radius-line",
+          type: "line",
+          source: "aoi-radius",
+          paint: {
+            "line-color": "#2ec4b6",
+            "line-width": 2,
+            "line-opacity": 0.7
+          }
+        });
+      }
+
+      if (!map.getLayer("aoi-center-dot")) {
+        map.addLayer({
+          id: "aoi-center-dot",
+          type: "circle",
+          source: "aoi-center",
+          paint: {
+            "circle-radius": 6,
+            "circle-color": "#f2c14e",
+            "circle-stroke-color": "#1f1f1f",
+            "circle-stroke-width": 2
+          }
+        });
+      }
     }
 
     async function refreshLive() {
       try {
-        const response = await fetch(`${apiBase}/tracks/live`);
+        const response = await fetch(`${apiBase}/tracks/live?bbox=${encodeURIComponent(aoiBboxString(currentAoi))}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
         const features = payload.features || [];
@@ -207,7 +312,7 @@
 
     async function refreshTrails() {
       try {
-        const response = await fetch(`${apiBase}/tracks/trails?minutes=45&max_entities=350`);
+        const response = await fetch(`${apiBase}/tracks/trails?minutes=45&max_entities=350&bbox=${encodeURIComponent(aoiBboxString(currentAoi))}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
         map.getSource("trails")?.setData(payload);
@@ -249,10 +354,171 @@
     }
 
     function attachMapInteractions() {
-      map.on("click", onTrackClick);
+      map.on("click", async (evt) => {
+        if (pinPickMode) {
+          const lat = Number(evt.lngLat.lat.toFixed(5));
+          const lon = Number(evt.lngLat.lng.toFixed(5));
+          document.getElementById("aoiLat").value = String(lat);
+          document.getElementById("aoiLon").value = String(lon);
+          pinPickMode = false;
+          setAoiStatus(`Pin selected at ${lat}, ${lon}. Applying AOI...`);
+          document.getElementById("aoiPinBtn").textContent = "Drop Pin";
+          await applyAoiFromInputs();
+          return;
+        }
+        onTrackClick(evt);
+      });
       for (const layerId of ["air-tracks", "sea-tracks"]) {
         map.on("mouseenter", layerId, () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", layerId, () => { map.getCanvas().style.cursor = "grab"; });
+      }
+    }
+
+    function setAoiStatus(text) {
+      document.getElementById("aoiStatus").textContent = text;
+    }
+
+    function syncAoiInputs() {
+      document.getElementById("aoiLat").value = currentAoi.centerLat.toFixed(5);
+      document.getElementById("aoiLon").value = currentAoi.centerLon.toFixed(5);
+      document.getElementById("aoiRadius").value = String(Math.round(currentAoi.radiusKm));
+      document.getElementById("aoiRadiusRange").value = String(Math.round(Math.min(1000, currentAoi.radiusKm)));
+    }
+
+    function aoiBboxString(aoi) {
+      const latDelta = aoi.radiusKm / 111.32;
+      const lonDelta = aoi.radiusKm / Math.max(111.32 * Math.cos((aoi.centerLat * Math.PI) / 180), 0.2);
+      return [
+        aoi.centerLon - lonDelta,
+        aoi.centerLat - latDelta,
+        aoi.centerLon + lonDelta,
+        aoi.centerLat + latDelta
+      ].join(",");
+    }
+
+    function radiusPolygon(lon, lat, radiusKm, steps = 72) {
+      const coords = [];
+      for (let i = 0; i <= steps; i += 1) {
+        const angle = (i / steps) * Math.PI * 2;
+        const latOffset = (radiusKm / 111.32) * Math.sin(angle);
+        const lonOffset = (radiusKm / Math.max(111.32 * Math.cos((lat * Math.PI) / 180), 0.2)) * Math.cos(angle);
+        coords.push([lon + lonOffset, lat + latOffset]);
+      }
+      return coords;
+    }
+
+    function renderAoiOverlay() {
+      const polygon = radiusPolygon(currentAoi.centerLon, currentAoi.centerLat, currentAoi.radiusKm);
+      map.getSource("aoi-radius")?.setData({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [polygon] },
+          properties: {}
+        }]
+      });
+      map.getSource("aoi-center")?.setData({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [currentAoi.centerLon, currentAoi.centerLat] },
+          properties: {}
+        }]
+      });
+    }
+
+    async function fetchCurrentAoi() {
+      try {
+        const response = await fetch(`${apiBase}/config/aoi`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        currentAoi = {
+          centerLat: Number(payload.center_lat),
+          centerLon: Number(payload.center_lon),
+          radiusKm: Number(payload.radius_km)
+        };
+        syncAoiInputs();
+        setAoiStatus(`AOI loaded (${currentAoi.centerLat.toFixed(3)}, ${currentAoi.centerLon.toFixed(3)} | ${Math.round(currentAoi.radiusKm)} km)`);
+      } catch (error) {
+        syncAoiInputs();
+        setAoiStatus(`AOI load fallback: ${error.message}`);
+      }
+    }
+
+    async function applyAoiFromInputs() {
+      const centerLat = Number(document.getElementById("aoiLat").value);
+      const centerLon = Number(document.getElementById("aoiLon").value);
+      const radiusKm = Number(document.getElementById("aoiRadius").value);
+      if (!Number.isFinite(centerLat) || !Number.isFinite(centerLon) || !Number.isFinite(radiusKm)) {
+        setAoiStatus("Invalid AOI input.");
+        return;
+      }
+
+      try {
+        setAoiStatus("Applying AOI...");
+        const response = await fetch(`${apiBase}/config/aoi`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            center_lat: centerLat,
+            center_lon: centerLon,
+            radius_km: radiusKm
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || payload.error || `HTTP ${response.status}`);
+        }
+
+        currentAoi = {
+          centerLat: Number(payload.center_lat),
+          centerLon: Number(payload.center_lon),
+          radiusKm: Number(payload.radius_km)
+        };
+        syncAoiInputs();
+        renderAoiOverlay();
+        map.flyTo({ center: [currentAoi.centerLon, currentAoi.centerLat], zoom: Math.max(5, map.getZoom()) });
+        await Promise.all([refreshLive(), refreshTrails()]);
+        setAoiStatus(`AOI updated (${currentAoi.centerLat.toFixed(3)}, ${currentAoi.centerLon.toFixed(3)} | ${Math.round(currentAoi.radiusKm)} km)`);
+      } catch (error) {
+        setAoiStatus(`AOI update failed: ${error.message}`);
+      }
+    }
+
+    function renderCityResults(places) {
+      const node = document.getElementById("cityResults");
+      if (!places.length) {
+        node.innerHTML = "";
+        return;
+      }
+      node.innerHTML = places.map((place, idx) => (
+        `<button type="button" class="city-option" data-idx="${idx}">${place.name}</button>`
+      )).join("");
+      for (const el of node.querySelectorAll(".city-option")) {
+        el.addEventListener("click", async () => {
+          const idx = Number(el.getAttribute("data-idx"));
+          const place = places[idx];
+          if (!place) return;
+          document.getElementById("aoiLat").value = String(place.lat.toFixed(5));
+          document.getElementById("aoiLon").value = String(place.lon.toFixed(5));
+          await applyAoiFromInputs();
+        });
+      }
+    }
+
+    async function searchCity() {
+      const q = document.getElementById("cityInput").value.trim();
+      if (!q) return;
+      setAoiStatus(`Searching "${q}"...`);
+      try {
+        const response = await fetch(`${apiBase}/geocode/search?q=${encodeURIComponent(q)}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        const places = Array.isArray(payload.places) ? payload.places : [];
+        renderCityResults(places);
+        setAoiStatus(places.length ? `Found ${places.length} place matches.` : "No city matches found.");
+      } catch (error) {
+        setAoiStatus(`City search failed: ${error.message}`);
       }
     }
 
@@ -292,9 +558,12 @@
       }
     }
 
-    map.on("load", () => {
+    map.on("load", async () => {
       ensureSourcesAndLayers();
       attachMapInteractions();
+      await fetchCurrentAoi();
+      renderAoiOverlay();
+      map.jumpTo({ center: [currentAoi.centerLon, currentAoi.centerLat], zoom: 6 });
 
       refreshLive();
       refreshTrails();
@@ -304,6 +573,28 @@
     });
 
     document.getElementById("copilotForm").addEventListener("submit", handleCopilotSubmit);
+    document.getElementById("citySearchBtn").addEventListener("click", searchCity);
+    document.getElementById("aoiApplyBtn").addEventListener("click", applyAoiFromInputs);
+    document.getElementById("aoiPinBtn").addEventListener("click", () => {
+      pinPickMode = !pinPickMode;
+      document.getElementById("aoiPinBtn").textContent = pinPickMode ? "Click Map..." : "Drop Pin";
+      setAoiStatus(pinPickMode ? "Click on map to set AOI center." : "Pin mode cancelled.");
+    });
+    document.getElementById("cityInput").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        searchCity();
+      }
+    });
+    document.getElementById("aoiRadiusRange").addEventListener("input", (event) => {
+      document.getElementById("aoiRadius").value = String(event.target.value);
+    });
+    document.getElementById("aoiRadius").addEventListener("input", (event) => {
+      const value = Number(event.target.value);
+      if (Number.isFinite(value)) {
+        document.getElementById("aoiRadiusRange").value = String(Math.max(5, Math.min(1000, value)));
+      }
+    });
   </script>
 </body>
 </html>
