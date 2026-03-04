@@ -1,10 +1,12 @@
 import http from "node:http";
+import { Readable } from "node:stream";
 import { URL } from "node:url";
 import { normalizeAdsbRecord, normalizeAisMessage, validateTrackEvent } from "./schema.mjs";
 import { fetchAdsbFi, fetchAirplanesLive, startAisStream } from "./providers.mjs";
 import { TrackStore } from "./store.mjs";
 import { createDb } from "./db.mjs";
 import { createCache } from "./cache.mjs";
+import { buildHistoricalSummaryText, normalizeCopilotOptions } from "./copilot-context.mjs";
 
 const port = Number(process.env.PORT || 8080);
 const initialCenterLat = Number(process.env.CENTER_LAT || 37.7749);
@@ -17,6 +19,7 @@ const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 const aisApiKey = process.env.AISSTREAM_API_KEY || "";
 const openclawGatewayUrl = process.env.OPENCLAW_GATEWAY_URL || "";
 const openclawGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || "";
+const historyRetentionDays = Number(process.env.HISTORY_RETENTION_DAYS || 30);
 
 const store = new TrackStore();
 const db = createDb(databaseUrl);
@@ -31,7 +34,7 @@ let aoi = {
   updatedAt: new Date().toISOString()
 };
 
-await db.init();
+await db.init({ retentionDays: historyRetentionDays });
 await cache.init();
 
 async function persistEvent(event) {
@@ -78,6 +81,14 @@ startOrRestartAisStream();
 setInterval(() => {
   pollAdsb();
 }, pollIntervalMs);
+
+setInterval(() => {
+  db.enforceRetention(historyRetentionDays).catch(() => {});
+}, 60 * 60 * 1000);
+
+setInterval(() => {
+  db.ensureFuturePartitions({ weeksAhead: 4, weeksBack: 1 }).catch(() => {});
+}, 12 * 60 * 60 * 1000);
 
 await pollAdsb();
 
@@ -227,17 +238,51 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const options = normalizeCopilotOptions(body);
     const bbox = computeAisBbox(aoi.centerLat, aoi.centerLon, aoi.radiusKm);
     const live = await cache.listLive(bbox);
     const fallback = live.length === 0 ? await db.listLive(bbox) : live;
-    const openclawAnswer = await tryOpenclawCopilot(query, fallback);
-    const answer = openclawAnswer || buildCopilotReply(query, fallback);
+    const filteredLive = filterEvents(fallback, options);
+    const historical = await db.getCopilotHistorySummary({
+      minutes: options.lookbackMinutes,
+      bbox,
+      domain: options.domain,
+      entityIds: options.entityIds
+    });
+    const historicalText = buildHistoricalSummaryText(historical);
+    const openclawAnswer = await tryOpenclawCopilot(query, filteredLive, historicalText);
+    const answer = openclawAnswer || buildCopilotReply(query, filteredLive, historicalText);
     json(res, 200, {
       query,
       answer,
       provider: openclawAnswer ? "openclaw" : "local-fallback",
+      lookback_minutes: options.lookbackMinutes,
       generated_at: new Date().toISOString()
     });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/copilot/stream") {
+    const body = await readJson(req);
+    const query = String(body?.query || "").trim();
+    if (!query) {
+      json(res, 400, { error: "query_required" });
+      return;
+    }
+
+    const options = normalizeCopilotOptions(body);
+    const bbox = computeAisBbox(aoi.centerLat, aoi.centerLon, aoi.radiusKm);
+    const live = await cache.listLive(bbox);
+    const fallback = live.length === 0 ? await db.listLive(bbox) : live;
+    const filteredLive = filterEvents(fallback, options);
+    const historical = await db.getCopilotHistorySummary({
+      minutes: options.lookbackMinutes,
+      bbox,
+      domain: options.domain,
+      entityIds: options.entityIds
+    });
+    const historicalText = buildHistoricalSummaryText(historical);
+    await streamCopilotReply({ query, events: filteredLive, historicalText, res });
     return;
   }
 
@@ -375,7 +420,7 @@ function groupTrailRows(rows) {
   return features;
 }
 
-function buildCopilotReply(query, events) {
+function buildCopilotReply(query, events, historicalText = "") {
   const air = events.filter((event) => event.domain === "air");
   const maritime = events.filter((event) => event.domain === "maritime");
   const topFast = [...events]
@@ -401,7 +446,8 @@ function buildCopilotReply(query, events) {
     `- Air: ${air.length}`,
     `- Maritime: ${maritime.length}`,
     topFast.length > 0 ? `- Fastest: ${Math.round(topFast[0].speed)} kts (${topFast[0].entity_id})` : "- Fastest: no speed data",
-    "- Note: This copilot response is grounded on current live cache only."
+    "- Note: This copilot response is grounded on current live cache + historical summary window.",
+    historicalText ? `- Historical: ${historicalText.split("\n")[0]}` : "- Historical: unavailable"
   ].join("\n");
 }
 
@@ -428,7 +474,7 @@ function readJson(req) {
   });
 }
 
-async function tryOpenclawCopilot(query, events) {
+async function tryOpenclawCopilot(query, events, historicalText = "") {
   if (!openclawGatewayUrl || !openclawGatewayToken) {
     return null;
   }
@@ -437,10 +483,14 @@ async function tryOpenclawCopilot(query, events) {
   const prompt = [
     "You are a GEOINT analyst copilot.",
     "Ground all claims only in the telemetry context below.",
+    "Include an Evidence section with concise bullets and timestamps.",
     "If unknown, say unknown.",
     "",
-    "Telemetry context:",
+    "Live telemetry context:",
     context,
+    "",
+    "Historical context:",
+    historicalText || "No historical summary available.",
     "",
     `User question: ${query}`
   ].join("\n");
@@ -450,7 +500,8 @@ async function tryOpenclawCopilot(query, events) {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${openclawGatewayToken}`
+        authorization: `Bearer ${openclawGatewayToken}`,
+        "accept-encoding": "identity"
       },
       body: JSON.stringify({
         model: "openclaw:main",
@@ -469,6 +520,87 @@ async function tryOpenclawCopilot(query, events) {
   } catch {
     return null;
   }
+}
+
+async function streamCopilotReply({ query, events, historicalText, res }) {
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no"
+  });
+  if (res.socket) {
+    res.socket.setNoDelay(true);
+  }
+  if (typeof res.flushHeaders === "function") {
+    res.flushHeaders();
+  }
+
+  const context = buildTelemetryContext(events);
+  const prompt = [
+    "You are a GEOINT analyst copilot.",
+    "Ground all claims only in the telemetry context below.",
+    "Include an Evidence section with concise bullets and timestamps.",
+    "If unknown, say unknown.",
+    "",
+    "Live telemetry context:",
+    context,
+    "",
+    "Historical context:",
+    historicalText || "No historical summary available.",
+    "",
+    `User question: ${query}`
+  ].join("\n");
+
+  if (!openclawGatewayUrl || !openclawGatewayToken) {
+    const answer = buildCopilotReply(query, events, historicalText);
+    res.write(`data: ${JSON.stringify({ delta: answer })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+
+  try {
+    const response = await fetch(`${openclawGatewayUrl.replace(/\/$/, "")}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${openclawGatewayToken}`
+      },
+      body: JSON.stringify({
+        model: "openclaw:main",
+        messages: [{ role: "user", content: prompt }],
+        stream: true
+      })
+    });
+
+    if (!response.ok || !response.body) {
+      const answer = buildCopilotReply(query, events, historicalText);
+      res.write(`data: ${JSON.stringify({ delta: answer })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
+    Readable.fromWeb(response.body).pipe(res);
+    return;
+  } catch {
+    const answer = buildCopilotReply(query, events, historicalText);
+    res.write(`data: ${JSON.stringify({ delta: answer })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+  }
+}
+
+function filterEvents(events, options) {
+  let next = events;
+  if (options.domain) {
+    next = next.filter((event) => event.domain === options.domain);
+  }
+  if (options.entityIds.length > 0) {
+    const ids = new Set(options.entityIds);
+    next = next.filter((event) => ids.has(event.entity_id));
+  }
+  return next;
 }
 
 function buildTelemetryContext(events) {

@@ -90,6 +90,7 @@
     .msg-user { align-self: flex-end; background: rgba(46, 196, 182, 0.18); border: 1px solid rgba(46, 196, 182, 0.35); }
     .msg-bot { align-self: stretch; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); }
     .copilot-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
+    .copilot-controls { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); }
     .copilot-input { flex: 1; background: rgba(0,0,0,0.24); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 10px; }
     .copilot-btn { border: 0; border-radius: 8px; padding: 10px 12px; background: #ff9f1c; color: #111; font-weight: 700; cursor: pointer; }
 
@@ -155,6 +156,15 @@
     </div>
     <div class="copilot-log" id="copilotLog">
       <div class="msg msg-bot">Copilot online. Try: "Summarize the current picture" or "Fastest entities right now".</div>
+    </div>
+    <div class="copilot-controls">
+      <label class="muted" for="copilotLookback">Lookback</label>
+      <select id="copilotLookback" class="aoi-input">
+        <option value="60">1h</option>
+        <option value="180" selected>3h</option>
+        <option value="720">12h</option>
+        <option value="1440">24h</option>
+      </select>
     </div>
     <form class="copilot-form" id="copilotForm">
       <input class="copilot-input" id="copilotInput" type="text" placeholder="Ask the copilot..." />
@@ -531,28 +541,89 @@
       log.scrollTop = log.scrollHeight;
     }
 
+    function createBotMessage() {
+      const log = document.getElementById("copilotLog");
+      const node = document.createElement("div");
+      node.className = "msg msg-bot";
+      node.textContent = "";
+      log.appendChild(node);
+      log.scrollTop = log.scrollHeight;
+      return node;
+    }
+
     async function handleCopilotSubmit(event) {
       event.preventDefault();
       const input = document.getElementById("copilotInput");
       const query = input.value.trim();
       if (!query) return;
+      const lookbackMinutes = Number(document.getElementById("copilotLookback").value || 180);
 
       addMessage("user", query);
       input.value = "";
 
       try {
-        const response = await fetch(`${apiBase}/copilot/query`, {
+        const response = await fetch(`${apiBase}/copilot/stream`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ query })
+          headers: {
+            "content-type": "application/json",
+            accept: "text/event-stream"
+          },
+          body: JSON.stringify({ query, lookback_minutes: lookbackMinutes })
         });
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const payload = await response.json();
-        addMessage("bot", payload.answer || "No answer returned.");
+        if (!response.body) {
+          throw new Error("missing_stream_body");
+        }
+
+        const node = createBotMessage();
+        const decoder = new TextDecoder();
+        const reader = response.body.getReader();
+        let buffer = "";
+        let streamedText = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() || "";
+
+          for (const raw of lines) {
+            const line = raw.trim();
+            if (!line.startsWith("data:")) {
+              continue;
+            }
+            const payloadRaw = line.slice(5).trim();
+            if (!payloadRaw) {
+              continue;
+            }
+            if (payloadRaw === "[DONE]") {
+              break;
+            }
+
+            try {
+              const payload = JSON.parse(payloadRaw);
+              const delta = payload?.choices?.[0]?.delta?.content ?? payload?.delta ?? "";
+              if (typeof delta === "string" && delta.length > 0) {
+                streamedText += delta;
+                node.textContent = streamedText;
+                document.getElementById("copilotLog").scrollTop = document.getElementById("copilotLog").scrollHeight;
+              }
+            } catch {
+              // Ignore malformed frame payloads.
+            }
+          }
+        }
+
+        if (!streamedText) {
+          node.textContent = "No answer returned.";
+        }
       } catch (error) {
         addMessage("bot", `Copilot error: ${error.message}`);
       }

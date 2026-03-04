@@ -22,18 +22,44 @@ const server = http.createServer(async (req, res) => {
     const upstreamUrl = new URL(req.url.replace("/api", ""), telemetryBase);
 
     try {
+      const requestBody = await readRequestBody(req);
       const upstream = await fetch(upstreamUrl, {
         method: req.method,
         headers: {
-          "content-type": req.headers["content-type"] || "application/json"
+          "content-type": req.headers["content-type"] || "application/json",
+          accept: req.headers.accept || "*/*"
         },
-        body: req.method === "GET" || req.method === "HEAD" ? undefined : req,
-        duplex: "half"
+        body: req.method === "GET" || req.method === "HEAD" ? undefined : requestBody
       });
+
+      const contentType = upstream.headers.get("content-type") || "application/json";
+      if ((contentType.includes("text/event-stream") || req.url?.includes("/copilot/stream")) && upstream.body) {
+        res.writeHead(upstream.status, {
+          "content-type": contentType,
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+          "x-accel-buffering": "no"
+        });
+        if (typeof res.flushHeaders === "function") {
+          res.flushHeaders();
+        }
+        const reader = upstream.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          if (value && value.length > 0) {
+            res.write(Buffer.from(value));
+          }
+        }
+        res.end();
+        return;
+      }
 
       const upstreamBody = await upstream.arrayBuffer();
       res.writeHead(upstream.status, {
-        "content-type": upstream.headers.get("content-type") || "application/json",
+        "content-type": contentType,
         "cache-control": "no-store"
       });
       res.end(Buffer.from(upstreamBody));
@@ -52,3 +78,11 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, () => {
   console.log(`ui listening on :${port}`);
 });
+
+function readRequestBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}

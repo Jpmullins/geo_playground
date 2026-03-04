@@ -43,6 +43,7 @@ cp .env.example .env
 - `LITELLM_BASE_URL`
 - `LITELLM_API_KEY`
 - `LITELLM_MODEL`
+- Optional: `HISTORY_RETENTION_DAYS` (default: `30`)
 
 5. Build and start:
 
@@ -106,6 +107,7 @@ Effects:
 - ADS-B ingest center/radius updates immediately.
 - AIS bbox subscription is recalculated from AOI radius.
 - Copilot analysis is scoped to the current AOI.
+- Copilot lookback window can be changed from the chat panel (`1h/3h/12h/24h`).
 
 ## Core Endpoints
 
@@ -115,6 +117,11 @@ Effects:
 - `GET /entities/:id`
 - `GET /entities/:id/history?start=ISO&end=ISO`
 - `POST /copilot/query`
+- Request body options:
+  - `query` (required)
+  - `lookback_minutes` (optional, default `180`)
+  - `domain` (optional: `air` or `maritime`)
+  - `entity_ids` (optional array of entity IDs)
 - `GET /config/aoi`
 - `POST /config/aoi` with `{ "center_lat": number, "center_lon": number, "radius_km": number }`
 - `GET /geocode/search?q=city`
@@ -127,6 +134,10 @@ Effects:
 - Without AIS key, maritime ingestion is disabled and reported in `/health`.
 - OpenClaw runtime state is stored in Docker named volume `openclaw_state` (not repo files).
 - Runtime AOI is in-memory (resets to compose defaults when telemetry container restarts/rebuilds).
+- `track_events` storage:
+  - Fresh installs create range-partitioned weekly storage.
+  - Existing non-partitioned deployments are preserved in place.
+  - Retention cleanup runs periodically using `HISTORY_RETENTION_DAYS`.
 
 ## Documentation
 

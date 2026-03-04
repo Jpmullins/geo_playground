@@ -28,6 +28,10 @@
 - `POST /api/config/aoi` to a known region.
 - `POST /api/copilot/query` should reflect entities in that AOI (not global cache).
 
+7. Historical-analysis richness:
+- Run two queries with same question and different lookback (`60` vs `720` minutes).
+- Longer lookback response should include trend/evidence details absent from short window.
+
 ## Success Conditions
 
 1. `npm test` exits 0.
@@ -40,6 +44,7 @@
 4. OpenClaw smoke reports `PASS` with successful `OPENCLAW_OK` response marker from model turn.
 5. AOI endpoints respond with valid schema and AOI updates are reflected in `/tracks/live`.
 6. Copilot remains reachable through UI proxy (`/api/copilot/query`) and returns provider-tagged answer.
+7. Historical mode returns evidence-style lines tied to time ranges and entities.
 
 ## Failure Conditions
 
@@ -51,3 +56,4 @@
 6. OpenClaw gateway `/healthz` fails or model turn errors through LiteLLM.
 7. AOI update rejects valid input or fails to change ingest/filter behavior.
 8. Copilot answers remain unchanged after AOI switch (indicates stale/global context use).
+9. Long lookback does not materially change trend/evidence content (indicates historical summary path failure).

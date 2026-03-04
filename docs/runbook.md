@@ -10,6 +10,7 @@
 - `LITELLM_BASE_URL`
 - `LITELLM_API_KEY`
 - `LITELLM_MODEL`
+ - Optional: `HISTORY_RETENTION_DAYS` (default `30`)
 5. Start stack: `docker compose up -d --build`.
 6. Validate:
 - `npm test`
@@ -39,6 +40,20 @@ Backend AOI APIs:
 - `POST /config/aoi`
 - `GET /geocode/search?q=...`
 
+Copilot historical options:
+
+- `lookback_minutes` (default `180`)
+- `domain` (`air` or `maritime`)
+- `entity_ids` (array, optional)
+
+Example:
+
+```bash
+curl -sS -X POST http://localhost:8080/copilot/query \
+  -H 'content-type: application/json' \
+  -d '{"query":"Summarize trend with evidence","lookback_minutes":720,"domain":"air"}'
+```
+
 Example:
 
 ```bash
@@ -65,3 +80,7 @@ curl -sS -X POST http://localhost:8080/config/aoi \
 
 3. No maritime contacts
 - Expected without `AISSTREAM_API_KEY`.
+
+4. Historical analysis seems shallow
+- Increase `lookback_minutes` (e.g. `720` or `1440`).
+- Confirm telemetry DB has older rows and retention window is not too small.
