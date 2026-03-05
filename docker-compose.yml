@@ -38,7 +38,7 @@ services:
       RADIUS_KM: "80"
       POLL_INTERVAL_MS: "5000"
       ADSB_PROVIDER: "adsbfi"
-      AISSTREAM_API_KEY: ""
+      AISSTREAM_API_KEY: "${AISSTREAM_API_KEY:-}"
       DATABASE_URL: "postgres://geouser:geopass@postgres:5432/geodb"
       REDIS_URL: "redis://redis:6379"
       OPENCLAW_GATEWAY_URL: "http://openclaw-gateway:18789"
