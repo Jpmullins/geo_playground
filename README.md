@@ -43,6 +43,7 @@ cp .env.example .env
 - `LITELLM_BASE_URL`
 - `LITELLM_API_KEY`
 - `LITELLM_MODEL`
+- `AISSTREAM_API_KEY` (required for maritime/AIS ingest)
 - Optional: `HISTORY_RETENTION_DAYS` (default: `30`)
 
 5. Build and start:
@@ -80,6 +81,22 @@ Generate a strong OpenClaw token (example):
 ```bash
 openssl rand -hex 32
 ```
+
+## AISStream API Key
+
+Maritime ingest requires `AISSTREAM_API_KEY`.
+
+1. Sign in or create an account: <https://aisstream.io/authenticate>
+2. Open your customer API keys page and create/copy a key: <https://aisstream.io/customer.html>
+3. Put it in local `.env`:
+
+```bash
+AISSTREAM_API_KEY=your_aisstream_key
+```
+
+Notes:
+- `.env` is gitignored in this repo; keep real keys there, not in committed files.
+- After changing `.env`, recreate telemetry: `docker compose up -d --force-recreate telemetry-gateway`
 
 ## Run + Access
 
@@ -130,7 +147,7 @@ Effects:
 
 ## Notes
 
-- AIS stream is key-gated: set `AISSTREAM_API_KEY` in `docker-compose.yml` env for telemetry-gateway.
+- AIS stream is key-gated: set `AISSTREAM_API_KEY` in local `.env` (loaded by `docker compose`).
 - Without AIS key, maritime ingestion is disabled and reported in `/health`.
 - OpenClaw runtime state is stored in Docker named volume `openclaw_state` (not repo files).
 - Runtime AOI is in-memory (resets to compose defaults when telemetry container restarts/rebuilds).

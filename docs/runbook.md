@@ -10,6 +10,7 @@
 - `LITELLM_BASE_URL`
 - `LITELLM_API_KEY`
 - `LITELLM_MODEL`
+- `AISSTREAM_API_KEY` (required for maritime ingest)
  - Optional: `HISTORY_RETENTION_DAYS` (default `30`)
 5. Start stack: `docker compose up -d --build`.
 6. Validate:
@@ -68,6 +69,22 @@ curl -sS -X POST http://localhost:8080/config/aoi \
 2. Access UI using `http://<EC2_PUBLIC_IP>:3000`.
 3. Do not use `localhost` from your laptop browser for EC2-hosted services.
 
+## AISStream Key Setup
+
+1. Sign in or create account: <https://aisstream.io/authenticate>
+2. Create/copy API key from customer page: <https://aisstream.io/customer.html>
+3. Set it in local `.env`:
+
+```bash
+AISSTREAM_API_KEY=your_aisstream_key
+```
+
+4. Apply config:
+
+```bash
+docker compose up -d --force-recreate telemetry-gateway
+```
+
 ## Common Issues
 
 1. `Copilot error: HTTP 400`
@@ -79,7 +96,8 @@ curl -sS -X POST http://localhost:8080/config/aoi \
 - Check `GET http://localhost:18789/healthz`.
 
 3. No maritime contacts
-- Expected without `AISSTREAM_API_KEY`.
+- Check `AISSTREAM_API_KEY` is set in local `.env` and telemetry is recreated.
+- Verify `GET http://localhost:8080/health` and inspect `ais` status message.
 
 4. Historical analysis seems shallow
 - Increase `lookback_minutes` (e.g. `720` or `1440`).
