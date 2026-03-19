@@ -2,12 +2,12 @@
   "name": "geo-playground",
   "private": true,
   "workspaces": [
-    "services/telemetry-gateway"
+    "apps/web"
   ],
   "scripts": {
-    "test": "npm run test -w telemetry-gateway",
-    "smoke": "bash scripts/smoke_e2e.sh",
-    "smoke:openclaw": "bash scripts/smoke_openclaw.sh",
-    "test:isolation": "bash scripts/test_openclaw_isolation.sh"
+    "dev": "npm run dev -w @geo-playground/web",
+    "build": "npm run build -w @geo-playground/web",
+    "test": "npm run test -w @geo-playground/web",
+    "typecheck": "npm run typecheck -w @geo-playground/web"
   }
 }

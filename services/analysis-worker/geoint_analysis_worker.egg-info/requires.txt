@@ -1,0 +1,9 @@
+fastapi>=0.115.12
+uvicorn[standard]>=0.34.2
+numpy>=2.2.5
+pillow>=11.2.1
+pydantic>=2.11.4
+
+[dev]
+pytest>=8.3.5
+httpx>=0.28.1

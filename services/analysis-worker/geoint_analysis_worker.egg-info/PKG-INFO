@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: geoint-analysis-worker
+Version: 0.1.0
+Summary: Sandboxed GEOINT analysis worker
+Requires-Python: >=3.12
+Requires-Dist: fastapi>=0.115.12
+Requires-Dist: uvicorn[standard]>=0.34.2
+Requires-Dist: numpy>=2.2.5
+Requires-Dist: pillow>=11.2.1
+Requires-Dist: pydantic>=2.11.4
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.5; extra == "dev"
+Requires-Dist: httpx>=0.28.1; extra == "dev"

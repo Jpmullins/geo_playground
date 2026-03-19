@@ -3,3 +3,10 @@ node_modules
 .DS_Store
 coverage
 npm-debug.log*
+.venv
+dist
+.pytest_cache
+__pycache__
+*.pyc
+services/analysis-worker/data
+services/agent/.langgraph_api

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geoint-analysis-worker"
+version = "0.1.0"
+description = "Sandboxed GEOINT analysis worker"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.12",
+  "uvicorn[standard]>=0.34.2",
+  "httpx>=0.28.1",
+  "numpy>=2.2.5",
+  "pillow>=11.2.1",
+  "pydantic>=2.11.4"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+  "httpx>=0.28.1"
+]
+
+[tool.setuptools]
+packages = ["geoint_worker"]

@@ -1,20 +1,19 @@
 services:
   postgres:
-    image: postgis/postgis:16-3.4
+    image: postgres:16-alpine
     environment:
-      POSTGRES_DB: geodb
-      POSTGRES_USER: geouser
-      POSTGRES_PASSWORD: geopass
+      POSTGRES_DB: geoint
+      POSTGRES_USER: geoint
+      POSTGRES_PASSWORD: geoint
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U geouser -d geodb"]
+      test: ["CMD-SHELL", "pg_isready -U geoint -d geoint"]
       interval: 5s
       timeout: 3s
       retries: 20
-    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -26,104 +25,56 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    restart: unless-stopped
 
-  telemetry-gateway:
-    build:
-      context: ./services/telemetry-gateway
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
     environment:
-      PORT: "8080"
-      CENTER_LAT: "37.7749"
-      CENTER_LON: "-122.4194"
-      RADIUS_KM: "80"
-      POLL_INTERVAL_MS: "5000"
-      ADSB_PROVIDER: "adsbfi"
-      AISSTREAM_API_KEY: "${AISSTREAM_API_KEY:-}"
-      DATABASE_URL: "postgres://geouser:geopass@postgres:5432/geodb"
-      REDIS_URL: "redis://redis:6379"
-      OPENCLAW_GATEWAY_URL: "http://openclaw-gateway:18789"
-      OPENCLAW_GATEWAY_TOKEN: "${OPENCLAW_GATEWAY_TOKEN:-}"
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  exec-broker:
-    build:
-      context: ./services/exec-broker
-    environment:
-      PORT: "8081"
-      CMD_TIMEOUT_MS: "10000"
-      MAX_OUTPUT_BYTES: "16384"
-    ports:
-      - "8081:8081"
-    restart: unless-stopped
-
-  search-proxy:
-    build:
-      context: ./services/search-proxy
-    environment:
-      PORT: "8082"
-      SEARCH_PROVIDER: "duckduckgo"
-    ports:
-      - "8082:8082"
-    restart: unless-stopped
-
-  ui:
-    image: node:24-alpine
-    working_dir: /app
+      - "9000:9000"
+      - "9001:9001"
     volumes:
-      - ./services/ui:/app:ro
-    command: ["node", "server.mjs"]
-    environment:
-      PORT: "3000"
-      TELEMETRY_API_BASE: "http://telemetry-gateway:8080"
-    ports:
-      - "3000:3000"
-    restart: unless-stopped
-    depends_on:
-      - telemetry-gateway
+      - minio_data:/data
 
-  openclaw-gateway:
+  analysis-worker:
     build:
-      context: ./services/openclaw-gateway
+      context: ./services/analysis-worker
     environment:
-      OPENCLAW_GATEWAY_TOKEN: "${OPENCLAW_GATEWAY_TOKEN:-}"
-      LITELLM_BASE_URL: "${LITELLM_BASE_URL:-}"
-      LITELLM_API_KEY: "${LITELLM_API_KEY:-}"
-      LITELLM_MODEL: "${LITELLM_MODEL:-}"
+      PORT: "8090"
+      ARTIFACT_ROOT: "/data/artifacts"
+      PUBLIC_BASE_URL: "http://localhost:8090"
+      AIS_API_URL: ${AIS_API_URL:-}
+      AIS_API_KEY: ${AIS_API_KEY:-}
+      ADSB_API_URL: ${ADSB_API_URL:-https://opendata.adsb.fi/api/v2}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
     volumes:
-      - ./services/openclaw-gateway/bootstrap:/bootstrap:ro
-      - openclaw_state:/root/.openclaw
+      - worker_data:/data
     ports:
-      - "18789:18789"
-    depends_on:
-      - telemetry-gateway
-      - exec-broker
-      - search-proxy
-    restart: unless-stopped
+      - "8090:8090"
 
-  openclaw-runtime:
+  agent-server:
     build:
-      context: ./services/openclaw-runtime
-    user: "10001:10001"
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,noexec,nosuid,nodev
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 128
-    mem_limit: 512m
-    cpus: 1.0
-    restart: unless-stopped
-    command: ["sh", "-c", "sleep infinity"]
+      context: ./services/agent
+    environment:
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-openai:gpt-4.1-mini}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANALYSIS_WORKER_URL: http://analysis-worker:8090
+      DEFAULT_STAC_API_URL: ${DEFAULT_STAC_API_URL:-https://planetarycomputer.microsoft.com/api/stac/v1}
+      SENTINEL_HUB_BASE_URL: ${SENTINEL_HUB_BASE_URL:-https://services.sentinel-hub.com}
+      SENTINEL_HUB_CLIENT_ID: ${SENTINEL_HUB_CLIENT_ID:-}
+      SENTINEL_HUB_CLIENT_SECRET: ${SENTINEL_HUB_CLIENT_SECRET:-}
+      AIS_API_URL: ${AIS_API_URL:-}
+      AIS_API_KEY: ${AIS_API_KEY:-}
+      ADSB_API_URL: ${ADSB_API_URL:-https://opendata.adsb.fi/api/v2}
+    depends_on:
+      - analysis-worker
+    ports:
+      - "2024:2024"
 
 volumes:
   pgdata:
-  openclaw_state:
+  minio_data:
+  worker_data:
