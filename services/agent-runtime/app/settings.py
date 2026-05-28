@@ -20,7 +20,7 @@ class Settings(BaseModel):
     litellm_model: str = Field(
         default_factory=lambda: os.getenv("INSIGHTS_LITELLM_MODEL")
         or os.getenv("LITELLM_MODEL")
-        or "gpt-4.1"
+        or "claude-sonnet-4-6"
     )
     request_timeout_seconds: float = Field(default_factory=lambda: float(os.getenv("AGENT_REQUEST_TIMEOUT_SECONDS", "12")))
 
