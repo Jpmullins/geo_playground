@@ -1,5 +1,4 @@
 import http from "node:http";
-import { Readable } from "node:stream";
 import { URL } from "node:url";
 import { normalizeAdsbRecord, normalizeAisMessage, validateTrackEvent } from "./schema.mjs";
 import { fetchAdsbFi, fetchAirplanesLive, startAisStream } from "./providers.mjs";
@@ -16,9 +15,7 @@ const pollIntervalMs = Number(process.env.POLL_INTERVAL_MS || 5000);
 const provider = process.env.ADSB_PROVIDER || "adsbfi";
 const databaseUrl = process.env.DATABASE_URL || "postgres://geouser:geopass@localhost:5432/geodb";
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
-const aisApiKey = process.env.AISSTREAM_API_KEY || "";
-const openclawGatewayUrl = process.env.OPENCLAW_GATEWAY_URL || "";
-const openclawGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || "";
+const aisApiKey = process.env.AISSTREAM_API_KEY || process.env.AIS_STREAM_API_KEY || "";
 const historyRetentionDays = Number(process.env.HISTORY_RETENTION_DAYS || 30);
 
 const store = new TrackStore();
@@ -90,7 +87,13 @@ setInterval(() => {
   db.ensureFuturePartitions({ weeksAhead: 4, weeksBack: 1 }).catch(() => {});
 }, 12 * 60 * 60 * 1000);
 
-await pollAdsb();
+pollAdsb().catch((error) => {
+  adsbPollStatus = {
+    ok: false,
+    message: String(error.message || error),
+    at: new Date().toISOString()
+  };
+});
 
 const server = http.createServer(async (req, res) => {
   withCors(res);
@@ -250,12 +253,11 @@ const server = http.createServer(async (req, res) => {
       entityIds: options.entityIds
     });
     const historicalText = buildHistoricalSummaryText(historical);
-    const openclawAnswer = await tryOpenclawCopilot(query, filteredLive, historicalText);
-    const answer = openclawAnswer || buildCopilotReply(query, filteredLive, historicalText);
+    const answer = buildCopilotReply(query, filteredLive, historicalText);
     json(res, 200, {
       query,
       answer,
-      provider: openclawAnswer ? "openclaw" : "local-fallback",
+      provider: "local-fallback",
       lookback_minutes: options.lookbackMinutes,
       generated_at: new Date().toISOString()
     });
@@ -474,54 +476,6 @@ function readJson(req) {
   });
 }
 
-async function tryOpenclawCopilot(query, events, historicalText = "") {
-  if (!openclawGatewayUrl || !openclawGatewayToken) {
-    return null;
-  }
-
-  const context = buildTelemetryContext(events);
-  const prompt = [
-    "You are a GEOINT analyst copilot.",
-    "Ground all claims only in the telemetry context below.",
-    "Include an Evidence section with concise bullets and timestamps.",
-    "If unknown, say unknown.",
-    "",
-    "Live telemetry context:",
-    context,
-    "",
-    "Historical context:",
-    historicalText || "No historical summary available.",
-    "",
-    `User question: ${query}`
-  ].join("\n");
-
-  try {
-    const response = await fetch(`${openclawGatewayUrl.replace(/\/$/, "")}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${openclawGatewayToken}`,
-        "accept-encoding": "identity"
-      },
-      body: JSON.stringify({
-        model: "openclaw:main",
-        messages: [{ role: "user", content: prompt }],
-        stream: false
-      })
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const payload = await response.json();
-    const text = payload?.choices?.[0]?.message?.content;
-    return typeof text === "string" && text.trim() ? text.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
 async function streamCopilotReply({ query, events, historicalText, res }) {
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -536,59 +490,10 @@ async function streamCopilotReply({ query, events, historicalText, res }) {
     res.flushHeaders();
   }
 
-  const context = buildTelemetryContext(events);
-  const prompt = [
-    "You are a GEOINT analyst copilot.",
-    "Ground all claims only in the telemetry context below.",
-    "Include an Evidence section with concise bullets and timestamps.",
-    "If unknown, say unknown.",
-    "",
-    "Live telemetry context:",
-    context,
-    "",
-    "Historical context:",
-    historicalText || "No historical summary available.",
-    "",
-    `User question: ${query}`
-  ].join("\n");
-
-  if (!openclawGatewayUrl || !openclawGatewayToken) {
-    const answer = buildCopilotReply(query, events, historicalText);
-    res.write(`data: ${JSON.stringify({ delta: answer })}\n\n`);
-    res.write("data: [DONE]\n\n");
-    res.end();
-    return;
-  }
-
-  try {
-    const response = await fetch(`${openclawGatewayUrl.replace(/\/$/, "")}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${openclawGatewayToken}`
-      },
-      body: JSON.stringify({
-        model: "openclaw:main",
-        messages: [{ role: "user", content: prompt }],
-        stream: true
-      })
-    });
-
-    if (!response.ok || !response.body) {
-      const answer = buildCopilotReply(query, events, historicalText);
-      res.write(`data: ${JSON.stringify({ delta: answer })}\n\n`);
-      res.write("data: [DONE]\n\n");
-      res.end();
-      return;
-    }
-    Readable.fromWeb(response.body).pipe(res);
-    return;
-  } catch {
-    const answer = buildCopilotReply(query, events, historicalText);
-    res.write(`data: ${JSON.stringify({ delta: answer })}\n\n`);
-    res.write("data: [DONE]\n\n");
-    res.end();
-  }
+  const answer = buildCopilotReply(query, events, historicalText);
+  res.write(`data: ${JSON.stringify({ delta: answer })}\n\n`);
+  res.write("data: [DONE]\n\n");
+  res.end();
 }
 
 function filterEvents(events, options) {
@@ -601,29 +506,4 @@ function filterEvents(events, options) {
     next = next.filter((event) => ids.has(event.entity_id));
   }
   return next;
-}
-
-function buildTelemetryContext(events) {
-  const air = events.filter((event) => event.domain === "air");
-  const maritime = events.filter((event) => event.domain === "maritime");
-  const fastest = [...events]
-    .filter((event) => typeof event.speed === "number")
-    .sort((a, b) => (b.speed || 0) - (a.speed || 0))
-    .slice(0, 8);
-
-  const lines = [
-    `total_entities=${events.length}`,
-    `air_entities=${air.length}`,
-    `maritime_entities=${maritime.length}`,
-    "fastest_entities:"
-  ];
-
-  for (const event of fastest) {
-    const id = event.identity?.callsign || event.identity?.icao || event.identity?.mmsi || event.entity_id;
-    lines.push(
-      `- ${id} speed=${Math.round(event.speed || 0)}kts lat=${event.lat.toFixed(4)} lon=${event.lon.toFixed(4)} source=${event.source} ts=${event.timestamp}`
-    );
-  }
-
-  return lines.join("\n");
 }

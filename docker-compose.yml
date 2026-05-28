@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: geouser
       POSTGRES_PASSWORD: geopass
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +19,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "16379:6379"
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -31,6 +31,9 @@ services:
   telemetry-gateway:
     build:
       context: ./services/telemetry-gateway
+    env_file:
+      - path: .env
+        required: false
     environment:
       PORT: "8080"
       CENTER_LAT: "37.7749"
@@ -38,18 +41,43 @@ services:
       RADIUS_KM: "80"
       POLL_INTERVAL_MS: "5000"
       ADSB_PROVIDER: "adsbfi"
-      AISSTREAM_API_KEY: "${AISSTREAM_API_KEY:-}"
       DATABASE_URL: "postgres://geouser:geopass@postgres:5432/geodb"
       REDIS_URL: "redis://redis:6379"
-      OPENCLAW_GATEWAY_URL: "http://openclaw-gateway:18789"
-      OPENCLAW_GATEWAY_TOKEN: "${OPENCLAW_GATEWAY_TOKEN:-}"
     ports:
-      - "8080:8080"
+      - "18080:8080"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  agent-runtime:
+    build:
+      context: ./services/agent-runtime
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "8090"
+      TELEMETRY_API_BASE: "http://telemetry-gateway:8080"
+      LITELLM_BASE_URL: "${LITELLM_BASE_URL:-https://gateway.insights.arlis.umd.edu/v1}"
+    ports:
+      - "18090:8090"
+    depends_on:
+      - telemetry-gateway
+    restart: unless-stopped
+
+  copilot-runtime:
+    build:
+      context: ./services/copilot-runtime
+    environment:
+      PORT: "8091"
+      AGENT_AGUI_URL: "http://agent-runtime:8090/agui"
+    ports:
+      - "18091:8091"
+    depends_on:
+      - agent-runtime
     restart: unless-stopped
 
   exec-broker:
@@ -60,7 +88,7 @@ services:
       CMD_TIMEOUT_MS: "10000"
       MAX_OUTPUT_BYTES: "16384"
     ports:
-      - "8081:8081"
+      - "18081:8081"
     restart: unless-stopped
 
   search-proxy:
@@ -70,60 +98,22 @@ services:
       PORT: "8082"
       SEARCH_PROVIDER: "duckduckgo"
     ports:
-      - "8082:8082"
+      - "18082:8082"
     restart: unless-stopped
 
   ui:
-    image: node:24-alpine
-    working_dir: /app
-    volumes:
-      - ./services/ui:/app:ro
-    command: ["node", "server.mjs"]
+    build:
+      context: ./services/ui
     environment:
       PORT: "3000"
       TELEMETRY_API_BASE: "http://telemetry-gateway:8080"
+      COPILOT_RUNTIME_BASE: "http://copilot-runtime:8091"
     ports:
-      - "3000:3000"
+      - "3010:3000"
     restart: unless-stopped
     depends_on:
       - telemetry-gateway
-
-  openclaw-gateway:
-    build:
-      context: ./services/openclaw-gateway
-    environment:
-      OPENCLAW_GATEWAY_TOKEN: "${OPENCLAW_GATEWAY_TOKEN:-}"
-      LITELLM_BASE_URL: "${LITELLM_BASE_URL:-}"
-      LITELLM_API_KEY: "${LITELLM_API_KEY:-}"
-      LITELLM_MODEL: "${LITELLM_MODEL:-}"
-    volumes:
-      - ./services/openclaw-gateway/bootstrap:/bootstrap:ro
-      - openclaw_state:/root/.openclaw
-    ports:
-      - "18789:18789"
-    depends_on:
-      - telemetry-gateway
-      - exec-broker
-      - search-proxy
-    restart: unless-stopped
-
-  openclaw-runtime:
-    build:
-      context: ./services/openclaw-runtime
-    user: "10001:10001"
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,noexec,nosuid,nodev
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 128
-    mem_limit: 512m
-    cpus: 1.0
-    restart: unless-stopped
-    command: ["sh", "-c", "sleep infinity"]
+      - copilot-runtime
 
 volumes:
   pgdata:
-  openclaw_state:

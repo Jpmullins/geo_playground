@@ -6,18 +6,17 @@
 - Command: `npm test`
 - Validates canonical schema normalization for ADS-B and AIS records.
 
-2. OpenClaw isolation baseline:
-- Command: `npm run test:isolation`
-- Validates container hardening controls via `docker inspect`.
+2. UI type/build checks:
+- Commands: `npm run typecheck:ui`, `npm run build`
+- Validates the React/MapLibre/CopilotKit analyst workspace compiles.
 
-3. Platform smoke test:
+3. Agent runtime tests:
+- Command: `npm run test:agent`
+- Validates Deep Agents settings and A2UI tool output without live provider calls.
+
+4. Platform smoke test:
 - Command: `npm run smoke`
-- Validates Postgres + Redis + telemetry ingest + APIs + UI + broker services.
-
-4. OpenClaw + LiteLLM smoke:
-- Command: `npm run smoke:openclaw`
-- Requires env vars from `.env.example`.
-- Validates OpenClaw gateway startup and one live model turn through LiteLLM.
+- Validates Postgres + Redis + telemetry ingest + APIs + agent runtime + CopilotKit runtime + UI + broker services.
 
 5. AOI API sanity checks:
 - `GET /api/config/aoi` returns current AOI values.
@@ -41,19 +40,18 @@
 - `/tracks/live` returns GeoJSON FeatureCollection.
 - `/tool/exec` runs allowed command and returns output.
 - `/search/query` returns provider-tagged results.
-4. OpenClaw smoke reports `PASS` with successful `OPENCLAW_OK` response marker from model turn.
-5. AOI endpoints respond with valid schema and AOI updates are reflected in `/tracks/live`.
-6. Copilot remains reachable through UI proxy (`/api/copilot/query`) and returns provider-tagged answer.
+4. AOI endpoints respond with valid schema and AOI updates are reflected in `/tracks/live`.
+5. Copilot remains reachable through UI proxy and returns agent-backed answers.
+6. Agent runtime health responds on `8090`, CopilotKit runtime health responds on `8091`, and UI serves the built analyst workspace.
 7. Historical mode returns evidence-style lines tied to time ranges and entities.
 
 ## Failure Conditions
 
 1. Schema tests fail for required TrackEvent fields.
-2. OpenClaw isolation baseline controls are missing.
-3. Postgres/Redis unavailable to telemetry gateway.
-4. API contract mismatch for `/tracks/live`, `/tool/exec`, or `/search/query`.
-5. UI unreachable on port 3000.
-6. OpenClaw gateway `/healthz` fails or model turn errors through LiteLLM.
-7. AOI update rejects valid input or fails to change ingest/filter behavior.
-8. Copilot answers remain unchanged after AOI switch (indicates stale/global context use).
-9. Long lookback does not materially change trend/evidence content (indicates historical summary path failure).
+2. Postgres/Redis unavailable to telemetry gateway.
+3. API contract mismatch for `/tracks/live`, `/tool/exec`, or `/search/query`.
+4. UI unreachable on port 3000.
+5. Agent runtime or CopilotKit runtime health fails.
+6. AOI update rejects valid input or fails to change ingest/filter behavior.
+7. Copilot answers remain unchanged after AOI switch (indicates stale/global context use).
+8. Long lookback does not materially change trend/evidence content (indicates historical summary path failure).

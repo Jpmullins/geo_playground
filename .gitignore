@@ -1,5 +1,9 @@
 node_modules
 .env
+.superpowers
 .DS_Store
 coverage
+dist
+__pycache__
+.pytest_cache
 npm-debug.log*

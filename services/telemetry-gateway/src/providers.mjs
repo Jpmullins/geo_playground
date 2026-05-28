@@ -40,7 +40,7 @@ export async function fetchAirplanesLive(centerLat, centerLon, radiusKm) {
 
 export function startAisStream({ apiKey, bbox, onMessage, onStatus }) {
   if (!apiKey) {
-    onStatus({ ok: false, message: "AISStream disabled: missing AISSTREAM_API_KEY", at: new Date().toISOString() });
+    onStatus({ ok: false, message: "AISStream disabled: missing AISSTREAM_API_KEY or AIS_STREAM_API_KEY", at: new Date().toISOString() });
     return { stop: () => {} };
   }
 

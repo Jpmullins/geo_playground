@@ -3,12 +3,11 @@
 Secure-first GEOINT assistant scaffold with:
 
 - `telemetry-gateway`: ADS-B + AIS ingest and canonical `TrackEvent` API
+- `agent-runtime`: Deep Agents primary GEOINT assistant exposed through AG-UI
+- `copilot-runtime`: CopilotKit runtime bridge with A2UI middleware enabled
 - `exec-broker`: controlled command execution API for agent tooling
 - `search-proxy`: policy-controlled web search API
-- `ui`: map-first live track visualization (MapLibre + deck.gl)
-- `ui`: analyst console with live entities, trails, entity card, and copilot panel
-- `openclaw-gateway`: real OpenClaw runtime wired to LiteLLM
-- `openclaw-runtime`: isolated container baseline for agent runtime policy checks
+- `ui`: React/MapLibre analyst console with live entities, trails, entity card, CopilotKit chat, and frontend tools
 - `postgres/postgis` + `redis`: persistence and hot-cache layers
 
 ## Prerequisites
@@ -39,11 +38,10 @@ cp .env.example .env
 ```
 
 4. Edit `.env` and set all required values:
-- `OPENCLAW_GATEWAY_TOKEN` (long random secret)
-- `LITELLM_BASE_URL`
-- `LITELLM_API_KEY`
+- `LITELLM_BASE_URL` or default Insights gateway URL
+- `INSIGHTS_LITELLM_API_KEY` or `LITELLM_API_KEY`
 - `LITELLM_MODEL`
-- `AISSTREAM_API_KEY` (required for maritime/AIS ingest)
+- `AIS_STREAM_API_KEY` or `AISSTREAM_API_KEY` (required for maritime/AIS ingest)
 - Optional: `HISTORY_RETENTION_DAYS` (default: `30`)
 
 5. Build and start:
@@ -56,42 +54,36 @@ docker compose up -d --build
 
 ```bash
 npm test
-npm run test:isolation
+npm run typecheck:ui
+npm run build
+npm run test:agent
 npm run smoke
-npm run smoke:openclaw
 ```
 
 ## Environment
 
-Create a local `.env` (or export variables) for OpenClaw + LiteLLM:
+Create a local `.env` (or export variables) for LiteLLM and telemetry. On this workstation, `/home/ubuntu/code/API_keys.txt` can be used as the source for generating `.env`, but Compose reads `.env` only.
 
 ```bash
 cp .env.example .env
 ```
 
-Required vars for OpenClaw smoke/integration:
+Required vars for agent integration:
 
-- `OPENCLAW_GATEWAY_TOKEN`
 - `LITELLM_BASE_URL`
-- `LITELLM_API_KEY`
+- `INSIGHTS_LITELLM_API_KEY` or `LITELLM_API_KEY`
 - `LITELLM_MODEL`
-
-Generate a strong OpenClaw token (example):
-
-```bash
-openssl rand -hex 32
-```
 
 ## AISStream API Key
 
-Maritime ingest requires `AISSTREAM_API_KEY`.
+Maritime ingest requires `AIS_STREAM_API_KEY` or `AISSTREAM_API_KEY`.
 
 1. Sign in or create an account: <https://aisstream.io/authenticate>
 2. Open your customer API keys page and create/copy a key: <https://aisstream.io/customer.html>
 3. Put it in local `.env`:
 
 ```bash
-AISSTREAM_API_KEY=your_aisstream_key
+AIS_STREAM_API_KEY=your_aisstream_key
 ```
 
 Notes:
@@ -102,14 +94,15 @@ Notes:
 
 After `docker compose up -d --build`, open:
 
-- Telemetry health: <http://localhost:8080/health>
-- Live tracks: <http://localhost:8080/tracks/live>
-- Exec broker: <http://localhost:8081/health>
-- Search proxy: <http://localhost:8082/health>
-- OpenClaw gateway health: <http://localhost:18789/healthz>
-- Map UI: <http://localhost:3000>
+- Telemetry health: <http://localhost:18080/health>
+- Live tracks: <http://localhost:18080/tracks/live>
+- Exec broker: <http://localhost:18081/health>
+- Search proxy: <http://localhost:18082/health>
+- Agent runtime health: <http://localhost:18090/health>
+- CopilotKit runtime health: <http://localhost:18091/health>
+- Map UI: <http://localhost:3010>
 
-If hosted on EC2, access using `http://<public-ip>:3000` and open required security-group ports.
+If hosted on EC2, access using `http://<public-ip>:3010` and open required security-group ports.
 
 ## AOI Controls (UI)
 
@@ -123,8 +116,8 @@ Effects:
 - Live tracks and trails are filtered to AOI bbox.
 - ADS-B ingest center/radius updates immediately.
 - AIS bbox subscription is recalculated from AOI radius.
-- Copilot analysis is scoped to the current AOI.
-- Copilot lookback window can be changed from the chat panel (`1h/3h/12h/24h`).
+- CopilotKit context sends AOI, viewport, selected entity, visible entity IDs, counts, and lookback to the Deep Agent.
+- Frontend tools let the assistant focus the map, set AOI, select an entity, and refresh tracks.
 
 ## Core Endpoints
 
@@ -144,12 +137,13 @@ Effects:
 - `GET /geocode/search?q=city`
 - `POST /tool/exec`
 - `POST /search/query`
+- `POST /agui` on `agent-runtime` for AG-UI agent streaming
+- `GET /api/copilotkit/info` through `copilot-runtime`/UI proxy
 
 ## Notes
 
-- AIS stream is key-gated: set `AISSTREAM_API_KEY` in local `.env` (loaded by `docker compose`).
+- AIS stream is key-gated: set `AIS_STREAM_API_KEY` or `AISSTREAM_API_KEY` in local env/key config.
 - Without AIS key, maritime ingestion is disabled and reported in `/health`.
-- OpenClaw runtime state is stored in Docker named volume `openclaw_state` (not repo files).
 - Runtime AOI is in-memory (resets to compose defaults when telemetry container restarts/rebuilds).
 - `track_events` storage:
   - Fresh installs create range-partitioned weekly storage.

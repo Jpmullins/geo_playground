@@ -1,0 +1,22 @@
+[project]
+name = "geo-agent-runtime"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "ag-ui-langgraph>=0.0.35",
+  "copilotkit>=0.1.91",
+  "deepagents>=0.6.3",
+  "fastapi>=0.115.0",
+  "httpx>=0.28.0",
+  "langchain-core>=1.0.0",
+  "langchain-openai>=1.1.0",
+  "langgraph>=1.0.0",
+  "pydantic>=2.0.0",
+  "uvicorn[standard]>=0.34.0"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0.0"
+]
+
