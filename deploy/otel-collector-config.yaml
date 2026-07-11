@@ -1,8 +1,8 @@
-# Minimal OTLP collector for local geo_playground observability.
-# Receives OTLP from the instrumented services and prints spans to its own log
-# (the `debug` exporter) so traces are verifiable with `docker compose logs
-# otel-collector`. Swap/extend `exporters` to fan out to Tempo/Jaeger/an external
-# harness collector when one is available.
+# OTLP collector for local geo_playground observability.
+# Receives OTLP from the instrumented services and fans out to:
+#   - `debug`: prints spans to the collector log (docker compose logs otel-collector)
+#   - `otlp/jaeger`: forwards to Jaeger all-in-one, which stores traces and serves
+#     a queryable API on :16686 (used by an external harness's telemetry adapter).
 receivers:
   otlp:
     protocols:
@@ -16,11 +16,15 @@ processors:
 
 exporters:
   debug:
-    verbosity: detailed
+    verbosity: normal
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [debug, otlp/jaeger]

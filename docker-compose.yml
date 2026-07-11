@@ -130,6 +130,18 @@ services:
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./deploy/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    depends_on:
+      - jaeger
+    restart: unless-stopped
+
+  # Trace backend: stores spans and serves a queryable API on :16686
+  # (/api/services, /api/traces) — consumed by the harness telemetry adapter.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
     restart: unless-stopped
 
 volumes:
