@@ -1,0 +1,26 @@
+# Minimal OTLP collector for local geo_playground observability.
+# Receives OTLP from the instrumented services and prints spans to its own log
+# (the `debug` exporter) so traces are verifiable with `docker compose logs
+# otel-collector`. Swap/extend `exporters` to fan out to Tempo/Jaeger/an external
+# harness collector when one is available.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

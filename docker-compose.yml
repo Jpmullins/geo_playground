@@ -43,6 +43,8 @@ services:
       ADSB_PROVIDER: "adsbfi"
       DATABASE_URL: "postgres://geouser:geopass@postgres:5432/geodb"
       REDIS_URL: "redis://redis:6379"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
+      OTEL_SERVICE_NAME: "telemetry-gateway"
     ports:
       - "18080:8080"
     depends_on:
@@ -62,8 +64,14 @@ services:
       PORT: "8090"
       TELEMETRY_API_BASE: "http://telemetry-gateway:8080"
       LITELLM_BASE_URL: "${LITELLM_BASE_URL:-https://gateway.insights.arlis.umd.edu/v1}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
+      OTEL_SERVICE_NAME: "geo-agent-runtime"
+      MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI:-sqlite:////mlruns/mlflow.db}"
+      MLFLOW_EXPERIMENT: "geo-playground-agent"
     ports:
       - "18090:8090"
+    volumes:
+      - mlruns:/mlruns
     depends_on:
       - telemetry-gateway
     restart: unless-stopped
@@ -74,6 +82,8 @@ services:
     environment:
       PORT: "8091"
       AGENT_AGUI_URL: "http://agent-runtime:8090/agui"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
+      OTEL_SERVICE_NAME: "copilot-runtime"
     ports:
       - "18091:8091"
     depends_on:
@@ -115,5 +125,13 @@ services:
       - telemetry-gateway
       - copilot-runtime
 
+  otel-collector:
+    image: otel/opentelemetry-collector:0.115.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./deploy/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  mlruns:

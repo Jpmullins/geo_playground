@@ -4,10 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/server.mjs",
+    "start": "node --import ./src/otel.mjs src/server.mjs",
     "test": "node --test"
   },
   "dependencies": {
+    "@opentelemetry/auto-instrumentations-node": "^0.78.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
+    "@opentelemetry/sdk-node": "^0.220.0",
     "pg": "^8.16.3",
     "redis": "^5.8.2",
     "ws": "^8.18.3"

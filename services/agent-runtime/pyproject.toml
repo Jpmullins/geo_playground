@@ -2,21 +2,35 @@
 name = "geo-agent-runtime"
 version = "0.1.0"
 requires-python = ">=3.12"
+# Volatile pre-1.0 agent libs are pinned to the exact versions verified in
+# docs/known-issues.md (captured 2026-05-28). A rebuild otherwise resolves newer
+# releases of these fast-moving packages and drifts the import surface.
 dependencies = [
-  "ag-ui-langgraph>=0.0.35",
-  "copilotkit>=0.1.91",
-  "deepagents>=0.6.3",
+  "ag-ui-langgraph==0.0.36",
+  "copilotkit==0.1.92",
+  "deepagents==0.6.6",
+  "langchain==1.3.2",
+  "langchain-core==1.4.0",
+  "langchain-openai==1.2.2",
+  "langgraph==1.2.2",
   "fastapi>=0.115.0",
   "httpx>=0.28.0",
-  "langchain-core>=1.0.0",
-  "langchain-openai>=1.1.0",
-  "langgraph>=1.0.0",
   "pydantic>=2.0.0",
-  "uvicorn[standard]>=0.34.0"
+  "uvicorn[standard]>=0.34.0",
+  # Observability (OTEL). All instrumentation is best-effort and no-ops when
+  # OTEL_EXPORTER_OTLP_ENDPOINT is unset (see app/observability.py).
+  "opentelemetry-sdk>=1.30.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.30.0",
+  "opentelemetry-instrumentation-fastapi>=0.51b0",
+  "opentelemetry-instrumentation-httpx>=0.51b0",
+  # MLflow autolog captures the LangGraph/DeepAgents agent internals (chains,
+  # tool calls, tokens) as traces. Best-effort; no-ops when MLFLOW_TRACKING_URI
+  # is unset. Kept as a floor (not pinned) so it can resolve against the pinned
+  # langchain v1 stack.
+  "mlflow>=2.22.0"
 ]
 
 [project.optional-dependencies]
 test = [
   "pytest>=8.0.0"
 ]
-

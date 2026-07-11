@@ -5,6 +5,7 @@ from ag_ui_langgraph import add_langgraph_fastapi_endpoint
 from copilotkit import LangGraphAGUIAgent
 
 from .agent import graph
+from .observability import configure_observability
 from .settings import get_settings
 
 
@@ -17,6 +18,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+# OTEL + MLflow autolog (both best-effort; no-op unless their env vars are set).
+configure_observability(app)
 
 
 @app.get("/health")
