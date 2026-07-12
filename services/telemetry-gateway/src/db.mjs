@@ -254,9 +254,11 @@ export function createDb(databaseUrl) {
         const to = new Date(from);
         to.setUTCDate(to.getUTCDate() + 7);
         const name = `track_events_y${from.getUTCFullYear()}w${String(getIsoWeek(from)).padStart(2, "0")}`;
+        // DDL cannot take bind parameters; both bounds are internally generated
+        // ISO timestamps, so literal interpolation is safe.
         await pool.query(
-          `CREATE TABLE IF NOT EXISTS ${name} PARTITION OF track_events FOR VALUES FROM ($1::timestamptz) TO ($2::timestamptz)`,
-          [from.toISOString(), to.toISOString()]
+          `CREATE TABLE IF NOT EXISTS ${name} PARTITION OF track_events ` +
+            `FOR VALUES FROM ('${from.toISOString()}'::timestamptz) TO ('${to.toISOString()}'::timestamptz)`
         );
       }
     },
