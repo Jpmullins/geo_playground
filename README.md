@@ -10,6 +10,15 @@ Secure-first GEOINT assistant scaffold with:
 - `ui`: React/MapLibre analyst console with live entities, trails, entity card, CopilotKit chat, and frontend tools
 - `postgres/postgis` + `redis`: persistence and hot-cache layers
 
+## Deployed instance
+
+Runs in production as a Nebari software pack on the ARLIS `insights-nebari` cluster:
+**https://geo.nebari.insights.arlis.umd.edu** (Keycloak SSO). Chart + ArgoCD Application
+live in `UMD-ARLIS/arlis-nebari` under `packs/geo-playground-pack/`; images in ECR
+`geo-playground/*` (built from this repo's per-service Dockerfiles, tagged by short SHA).
+In-cluster it uses the insights LiteLLM gateway, the platform MLflow for agent traces,
+a bundled Jaeger for OTLP traces (benchmesh Tier-3 evidence), and live AIS ingest.
+
 ## Prerequisites
 
 - Docker Engine + `docker compose` plugin
