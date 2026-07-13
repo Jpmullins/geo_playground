@@ -1,7 +1,9 @@
 // OTEL bootstrap. Loaded via `node --import ./src/otel.mjs` so auto-instrumentation
 // is installed before any app module. No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
-// Auto-instruments node:http (the gateway server + outbound fetch), pg, redis, ws —
-// and propagates W3C traceparent so a harness can stitch cross-service traces.
+// Auto-instruments node:http (the gateway server + outbound fetch/undici), pg, and
+// redis, and propagates W3C traceparent so a harness can stitch cross-service traces.
+// There is NO websocket auto-instrumentation: the AIS ingest path is covered by
+// manual spans in server.mjs (ais.message / track.persist), not by this bootstrap.
 import { NodeSDK } from "@opentelemetry/sdk-node"
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"

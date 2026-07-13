@@ -68,6 +68,9 @@ services:
       OTEL_SERVICE_NAME: "geo-agent-runtime"
       MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI:-sqlite:////mlruns/mlflow.db}"
       MLFLOW_EXPERIMENT: "geo-playground-agent"
+      # Send agent traces to BOTH MLflow and the OTLP endpoint (parity with the
+      # nebari deployment, where the same flag fans out to Tempo).
+      MLFLOW_TRACE_ENABLE_OTLP_DUAL_EXPORT: "true"
     ports:
       - "18090:8090"
     volumes:
@@ -97,6 +100,8 @@ services:
       PORT: "8081"
       CMD_TIMEOUT_MS: "10000"
       MAX_OUTPUT_BYTES: "16384"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
+      OTEL_SERVICE_NAME: "exec-broker"
     ports:
       - "18081:8081"
     restart: unless-stopped
@@ -107,6 +112,8 @@ services:
     environment:
       PORT: "8082"
       SEARCH_PROVIDER: "duckduckgo"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
+      OTEL_SERVICE_NAME: "search-proxy"
     ports:
       - "18082:8082"
     restart: unless-stopped
@@ -118,6 +125,8 @@ services:
       PORT: "3000"
       TELEMETRY_API_BASE: "http://telemetry-gateway:8080"
       COPILOT_RUNTIME_BASE: "http://copilot-runtime:8091"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
+      OTEL_SERVICE_NAME: "geo-ui"
     ports:
       - "3010:3000"
     restart: unless-stopped

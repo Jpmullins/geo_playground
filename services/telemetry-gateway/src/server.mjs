@@ -1,5 +1,6 @@
 import http from "node:http";
 import { URL } from "node:url";
+import { trace, SpanStatusCode } from "@opentelemetry/api";
 import { normalizeAdsbRecord, normalizeAisMessage, validateTrackEvent } from "./schema.mjs";
 import { fetchAdsbFi, fetchAirplanesLive, startAisStream } from "./providers.mjs";
 import { TrackStore } from "./store.mjs";
@@ -22,6 +23,11 @@ const store = new TrackStore();
 const db = createDb(databaseUrl);
 const cache = createCache(redisUrl);
 
+// No-op tracer unless otel.mjs started an SDK. Manual spans cover the paths
+// auto-instrumentation cannot see: interval-driven polls, websocket messages,
+// and the persist fan-out (which otherwise emit parentless pg/redis spans).
+const tracer = trace.getTracer("telemetry-gateway");
+
 let adsbPollStatus = { ok: true, message: "init", at: new Date().toISOString() };
 let aisStatus = { ok: false, message: "not started", at: new Date().toISOString() };
 let aoi = {
@@ -35,41 +41,74 @@ await db.init({ retentionDays: historyRetentionDays });
 await cache.init();
 
 async function persistEvent(event) {
-  store.upsert(event);
-  await Promise.all([
-    db.insertEvent(event),
-    cache.upsertEvent(event)
-  ]);
+  return tracer.startActiveSpan("track.persist", {
+    attributes: {
+      "track.entity_id": event.entity_id,
+      "track.domain": event.domain,
+      "track.source": event.source
+    }
+  }, async (span) => {
+    try {
+      store.upsert(event);
+      await Promise.all([
+        db.insertEvent(event),
+        cache.upsertEvent(event)
+      ]);
+    } catch (error) {
+      span.recordException(error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: String(error.message || error) });
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
 }
 
 async function pollAdsb() {
-  try {
-    const records = provider === "airplaneslive"
-      ? await fetchAirplanesLive(aoi.centerLat, aoi.centerLon, aoi.radiusKm)
-      : await fetchAdsbFi(aoi.centerLat, aoi.centerLon, aoi.radiusKm);
-
-    let ingested = 0;
-    for (const record of records) {
-      const normalized = normalizeAdsbRecord(record, provider);
-      if (!normalized || !validateTrackEvent(normalized)) {
-        continue;
-      }
-      await persistEvent(normalized);
-      ingested += 1;
+  return tracer.startActiveSpan("adsb.poll", {
+    attributes: {
+      "adsb.provider": provider,
+      "aoi.center_lat": aoi.centerLat,
+      "aoi.center_lon": aoi.centerLon,
+      "aoi.radius_km": aoi.radiusKm
     }
+  }, async (span) => {
+    try {
+      const records = provider === "airplaneslive"
+        ? await fetchAirplanesLive(aoi.centerLat, aoi.centerLon, aoi.radiusKm)
+        : await fetchAdsbFi(aoi.centerLat, aoi.centerLon, aoi.radiusKm);
 
-    adsbPollStatus = {
-      ok: true,
-      message: `ingested ${ingested} air records`,
-      at: new Date().toISOString()
-    };
-  } catch (error) {
-    adsbPollStatus = {
-      ok: false,
-      message: String(error.message || error),
-      at: new Date().toISOString()
-    };
-  }
+      let ingested = 0;
+      for (const record of records) {
+        const normalized = normalizeAdsbRecord(record, provider);
+        if (!normalized || !validateTrackEvent(normalized)) {
+          continue;
+        }
+        await persistEvent(normalized);
+        ingested += 1;
+      }
+
+      span.setAttributes({
+        "adsb.records_fetched": records.length,
+        "adsb.records_ingested": ingested
+      });
+      adsbPollStatus = {
+        ok: true,
+        message: `ingested ${ingested} air records`,
+        at: new Date().toISOString()
+      };
+    } catch (error) {
+      span.recordException(error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: String(error.message || error) });
+      adsbPollStatus = {
+        ok: false,
+        message: String(error.message || error),
+        at: new Date().toISOString()
+      };
+    } finally {
+      span.end();
+    }
+  });
 }
 
 let aisController = { stop: () => {} };
@@ -80,11 +119,17 @@ setInterval(() => {
 }, pollIntervalMs);
 
 setInterval(() => {
-  db.enforceRetention(historyRetentionDays).catch(() => {});
+  tracer.startActiveSpan("db.retention_sweep", async (span) => {
+    await db.enforceRetention(historyRetentionDays).catch(() => {});
+    span.end();
+  });
 }, 60 * 60 * 1000);
 
 setInterval(() => {
-  db.ensureFuturePartitions({ weeksAhead: 4, weeksBack: 1 }).catch(() => {});
+  tracer.startActiveSpan("db.ensure_partitions", async (span) => {
+    await db.ensureFuturePartitions({ weeksAhead: 4, weeksBack: 1 }).catch(() => {});
+    span.end();
+  });
 }, 12 * 60 * 60 * 1000);
 
 pollAdsb().catch((error) => {
@@ -132,6 +177,14 @@ const server = http.createServer(async (req, res) => {
       radiusKm,
       updatedAt: new Date().toISOString()
     };
+
+    // Stamp the new AOI on the request span so a location change is queryable
+    // from traces, not just visible as an anonymous POST.
+    trace.getActiveSpan()?.setAttributes({
+      "aoi.center_lat": centerLat,
+      "aoi.center_lon": centerLon,
+      "aoi.radius_km": radiusKm
+    });
 
     startOrRestartAisStream();
     await pollAdsb();
@@ -304,6 +357,13 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 function startOrRestartAisStream() {
+  const span = tracer.startSpan("ais.subscribe", {
+    attributes: {
+      "aoi.center_lat": aoi.centerLat,
+      "aoi.center_lon": aoi.centerLon,
+      "aoi.radius_km": aoi.radiusKm
+    }
+  });
   try {
     aisController.stop();
   } catch {
@@ -311,6 +371,7 @@ function startOrRestartAisStream() {
   }
 
   const aisBounds = computeAisBbox(aoi.centerLat, aoi.centerLon, aoi.radiusKm);
+  span.setAttribute("ais.bbox", aisBounds.join(","));
   aisController = startAisStream({
     apiKey: aisApiKey,
     bbox: aisBounds,
@@ -321,13 +382,27 @@ function startOrRestartAisStream() {
         return;
       }
 
-      try {
-        await persistEvent(normalized);
-      } catch (error) {
-        aisStatus = { ok: false, message: `AIS persist error: ${error.message}`, at: new Date().toISOString() };
-      }
+      // Websocket messages have no auto-instrumentation and no parent span —
+      // this is the trace root for each accepted AIS report.
+      await tracer.startActiveSpan("ais.message", {
+        attributes: {
+          "track.entity_id": normalized.entity_id,
+          "track.domain": normalized.domain
+        }
+      }, async (msgSpan) => {
+        try {
+          await persistEvent(normalized);
+        } catch (error) {
+          msgSpan.recordException(error);
+          msgSpan.setStatus({ code: SpanStatusCode.ERROR, message: String(error.message || error) });
+          aisStatus = { ok: false, message: `AIS persist error: ${error.message}`, at: new Date().toISOString() };
+        } finally {
+          msgSpan.end();
+        }
+      });
     }
   });
+  span.end();
 }
 
 function computeAisBbox(centerLat, centerLon, radiusKm) {

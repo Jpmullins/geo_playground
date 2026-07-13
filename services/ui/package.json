@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "node server.mjs",
-    "start": "node server.mjs",
+    "preview": "node --import ./otel.mjs server.mjs",
+    "start": "node --import ./otel.mjs server.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@copilotkit/react-core": "1.58.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
+    "@opentelemetry/instrumentation-http": "^0.220.0",
+    "@opentelemetry/instrumentation-undici": "^0.30.0",
+    "@opentelemetry/sdk-node": "^0.220.0",
     "@types/geojson": "^7946.0.16",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

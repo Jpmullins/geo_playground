@@ -48,6 +48,8 @@ Six services behind Docker Compose. Internal ports are the `8080`/`3000` series;
 
 **Agent ↔ UI shared context** — the agent is map-aware via CopilotKit shared state: AOI, viewport, selected entity, visible entity IDs, counts, and lookback flow from the UI into the agent, and the agent can call frontend tools (focus map, set AOI, select entity, refresh). `services/telemetry-gateway/src/copilot-context.mjs` builds the historical-summary text and normalizes `/copilot/query` options (`lookback_minutes`, `domain`, `entity_ids`).
 
+**Observability** — every service exports OTLP traces when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (compose defaults it to the local collector → Jaeger at `:16686`; on Nebari it's the cluster collector → S3-backed Tempo/Grafana). telemetry-gateway adds manual spans for interval/websocket work (`adsb.poll`, `ais.message`, `track.persist`); agent traces also go to MLflow. See `docs/observability.md`.
+
 **Deep Agents structure** — `services/agent-runtime/app/agent.py` defines one primary agent with a system prompt plus scoped subagents (air-picture, maritime-picture, pattern, visualization-composer), each given a restricted tool subset. Tools live in `app/tools.py` and are thin HTTP wrappers (`app/telemetry.py`) over telemetry-gateway endpoints. Visual results are returned as A2UI cards via `make_geoint_dashboard`.
 
 ## Notes that bite
